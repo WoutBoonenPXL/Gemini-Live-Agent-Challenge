@@ -1,0 +1,113 @@
+# Google Cloud Build — CI/CD pipeline for ScreenPilot
+# Run: gcloud builds submit --config cloudbuild.yaml
+#
+# Required substitutions (set in Cloud Build trigger or pass via --substitutions):
+#   _REGION          = us-central1
+#   _GOOGLE_API_KEY  = <your Gemini API key>
+
+substitutions:
+  _REGION: us-central1
+  _BACKEND_SERVICE: screenpilot-backend
+  _FRONTEND_SERVICE: screenpilot-frontend
+  _GOOGLE_API_KEY: ""   # override in trigger
+
+steps:
+  # ─── Backend ───────────────────────────────────────────────────────────────
+
+  - id: build-backend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/screenpilot/backend:$COMMIT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/screenpilot/backend:latest
+      - ./backend
+
+  - id: push-backend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/screenpilot/backend
+    waitFor: [build-backend]
+
+  - id: deploy-backend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_BACKEND_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/screenpilot/backend:$COMMIT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --memory=2Gi
+      - --cpu=2
+      - --concurrency=80
+      - --set-env-vars=GOOGLE_API_KEY=${_GOOGLE_API_KEY},GEMINI_MODEL=gemini-2.0-flash,GCP_PROJECT_ID=$PROJECT_ID
+    waitFor: [push-backend]
+
+  # Capture the backend URL for the frontend build
+  - id: get-backend-url
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        BACKEND_URL=$(gcloud run services describe ${_BACKEND_SERVICE} \
+          --region=${_REGION} --format='value(status.url)')
+        echo "BACKEND_URL=$${BACKEND_URL}" > /workspace/backend_url.env
+        echo "Backend deployed at: $${BACKEND_URL}"
+    waitFor: [deploy-backend]
+
+  # ─── Frontend ──────────────────────────────────────────────────────────────
+
+  - id: build-frontend
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        source /workspace/backend_url.env
+        docker build \
+          --build-arg NEXT_PUBLIC_BACKEND_WS_URL=$${BACKEND_URL/https:/wss:}/ws \
+          --build-arg NEXT_PUBLIC_BACKEND_HTTP_URL=$${BACKEND_URL} \
+          -t ${_REGION}-docker.pkg.dev/$PROJECT_ID/screenpilot/frontend:$COMMIT_SHA \
+          -t ${_REGION}-docker.pkg.dev/$PROJECT_ID/screenpilot/frontend:latest \
+          ./frontend
+    waitFor: [get-backend-url]
+
+  - id: push-frontend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/screenpilot/frontend
+    waitFor: [build-frontend]
+
+  - id: deploy-frontend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        source /workspace/backend_url.env
+        gcloud run deploy ${_FRONTEND_SERVICE} \
+          --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/screenpilot/frontend:$COMMIT_SHA \
+          --region=${_REGION} \
+          --platform=managed \
+          --allow-unauthenticated \
+          --memory=512Mi \
+          --cpu=1 \
+          --set-env-vars=NEXT_PUBLIC_BACKEND_WS_URL=$${BACKEND_URL/https:/wss:}/ws,NEXT_PUBLIC_BACKEND_HTTP_URL=$${BACKEND_URL}
+    waitFor: [push-frontend]
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/screenpilot/backend:$COMMIT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/screenpilot/frontend:$COMMIT_SHA
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8

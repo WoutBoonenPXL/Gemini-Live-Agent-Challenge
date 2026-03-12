@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.env
+.env.local
+
+# Node
+node_modules/
+.next/
+out/
+dist/
+*.env.local
+.env*.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# Docker
+.dockerignore
+
+# Cloud
+.gcloud/
+service-account-key.json
+*-credentials.json
+
+# OS
+.DS_Store
+Thumbs.db

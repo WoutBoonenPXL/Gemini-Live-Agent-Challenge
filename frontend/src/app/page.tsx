@@ -1,0 +1,244 @@
+"use client";
+
+import { useState, useCallback, useEffect, useRef } from "react";
+import { Zap } from "lucide-react";
+import { ScreenCapture } from "@/components/ScreenCapture";
+import { ActionOverlay } from "@/components/ActionOverlay";
+import { CommandPanel } from "@/components/CommandPanel";
+import { SessionLog } from "@/components/SessionLog";
+import { VoiceInput } from "@/components/VoiceInput";
+import { ScreenPilotWebSocket, type ServerMessage, type AgentAction } from "@/lib/websocket";
+
+const BACKEND_HTTP =
+  process.env.NEXT_PUBLIC_BACKEND_HTTP_URL ?? "http://localhost:8000";
+
+export default function Home() {
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [wsClient, setWsClient] = useState<ScreenPilotWebSocket | null>(null);
+  const [connected, setConnected] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [messages, setMessages] = useState<ServerMessage[]>([]);
+  const [currentAction, setCurrentAction] = useState<AgentAction | null>(null);
+  const [screenDims, setScreenDims] = useState({ w: 1280, h: 720 });
+  const [pendingFrame, setPendingFrame] = useState<{
+    b64: string; w: number; h: number
+  } | null>(null);
+
+  const wsRef = useRef<ScreenPilotWebSocket | null>(null);
+
+  // ---------------------------------------------------------------------------
+  // Create session + connect WebSocket
+  // ---------------------------------------------------------------------------
+  const startSession = useCallback(async (goal: string) => {
+    try {
+      const res = await fetch(`${BACKEND_HTTP}/session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal }),
+      });
+      const { session_id } = await res.json() as { session_id: string };
+      setSessionId(session_id);
+
+      const ws = new ScreenPilotWebSocket(session_id);
+      wsRef.current = ws;
+      setWsClient(ws);
+
+      ws.onStatus((isConnected) => setConnected(isConnected));
+
+      ws.onMessage((msg) => {
+        setMessages((prev) => [...prev, msg]);
+
+        if (msg.type === "action" && msg.action) {
+          setCurrentAction(msg.action);
+
+          if (msg.action.type === "screenshot") {
+            // Backend wants a fresh frame — send the most recent one
+            setPendingFrame((f) => {
+              if (f) {
+                ws.send({
+                  session_id,
+                  type: "screenshot",
+                  image_b64: f.b64,
+                  screen_width: f.w,
+                  screen_height: f.h,
+                });
+              }
+              return f;
+            });
+          } else if (
+            msg.action.type === "done" ||
+            msg.action.type === "ask_user"
+          ) {
+            setRunning(false);
+          } else {
+            // Simulate action then report success back
+            setTimeout(() => {
+              ws.send({
+                session_id,
+                type: "action_result",
+                action_success: true,
+              });
+            }, 600);
+          }
+        }
+
+        if (msg.type === "error") {
+          setRunning(false);
+        }
+      });
+
+      ws.connect();
+      setRunning(true);
+      setMessages([]);
+    } catch (err) {
+      console.error("Failed to start session:", err);
+    }
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Screen capture callbacks
+  // ---------------------------------------------------------------------------
+  const handleFrame = useCallback(
+    (b64: string, w: number, h: number) => {
+      setPendingFrame({ b64, w, h });
+      setScreenDims({ w, h });
+    },
+    [],
+  );
+
+  const handleCaptureStart = useCallback(() => setCapturing(true), []);
+  const handleCaptureStop = useCallback(() => {
+    setCapturing(false);
+    setRunning(false);
+  }, []);
+
+  const handleStop = useCallback(() => {
+    wsRef.current?.disconnect();
+    setRunning(false);
+    setConnected(false);
+    setSessionId(null);
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Cleanup
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    return () => {
+      wsRef.current?.disconnect();
+    };
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+  return (
+    <main className="min-h-screen p-4 md:p-8">
+      {/* Header */}
+      <header className="flex items-center gap-3 mb-8">
+        <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-brand-500/20 border border-brand-500/30">
+          <Zap size={20} className="text-brand-400" />
+        </div>
+        <div>
+          <h1 className="text-xl font-bold text-white tracking-tight">ScreenPilot</h1>
+          <p className="text-xs text-white/40">AI UI Navigator · Gemini 2.0 Flash</p>
+        </div>
+        {/* Connection indicator */}
+        <div className="ml-auto flex items-center gap-2 text-xs">
+          <span
+            className={`w-2 h-2 rounded-full ${
+              connected ? "bg-green-400 animate-pulse" : "bg-white/20"
+            }`}
+          />
+          <span className="text-white/40">
+            {connected ? "Connected" : capturing ? "Ready" : "Offline"}
+          </span>
+        </div>
+      </header>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-7xl mx-auto">
+        {/* Left column — Screen preview */}
+        <div className="lg:col-span-2 flex flex-col gap-4">
+          <section className="bg-white/3 border border-white/8 rounded-2xl p-4">
+            <h2 className="text-sm font-medium text-white/60 mb-3">Screen Capture</h2>
+            <ScreenCapture
+              onFrame={handleFrame}
+              onStop={handleCaptureStop}
+              onStart={handleCaptureStart}
+              active={capturing}
+            />
+
+            {/* Live screen view with action overlay */}
+            {pendingFrame && (
+              <div className="relative mt-3 rounded-xl overflow-hidden border border-white/10 bg-black">
+                <img
+                  src={`data:image/jpeg;base64,${pendingFrame.b64}`}
+                  alt="Screen capture"
+                  className="w-full h-auto"
+                />
+                <ActionOverlay
+                  action={currentAction}
+                  screenWidth={screenDims.w}
+                  screenHeight={screenDims.h}
+                />
+              </div>
+            )}
+          </section>
+        </div>
+
+        {/* Right column — Controls + Log */}
+        <div className="flex flex-col gap-4">
+          {/* Command panel */}
+          <section className="bg-white/3 border border-white/8 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-medium text-white/60">Command</h2>
+              <VoiceInput
+                onTranscript={(text) => {
+                  if (!running && capturing) startSession(text);
+                }}
+                disabled={!capturing || running}
+              />
+            </div>
+            <CommandPanel
+              onSubmit={(goal) => startSession(goal)}
+              onStop={handleStop}
+              running={running}
+              disabled={!capturing}
+            />
+          </section>
+
+          {/* Session log */}
+          <section className="bg-white/3 border border-white/8 rounded-2xl p-4 flex-1">
+            <h2 className="text-sm font-medium text-white/60 mb-3">
+              Agent Activity
+              {running && (
+                <span className="ml-2 inline-flex items-center gap-1 text-brand-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-brand-400 animate-ping" />
+                  <span className="text-xs font-normal">Running</span>
+                </span>
+              )}
+            </h2>
+            <SessionLog messages={messages} />
+          </section>
+
+          {/* Current action card */}
+          {currentAction && currentAction.type !== "screenshot" && (
+            <div className="bg-brand-500/10 border border-brand-500/20 rounded-xl p-3">
+              <p className="text-xs text-brand-300/70 mb-1 font-medium uppercase tracking-wider">
+                Last Action
+              </p>
+              <p className="text-sm text-brand-200 font-mono">
+                {currentAction.type}
+                {currentAction.description && (
+                  <span className="text-white/40 font-sans font-normal ml-2">
+                    {currentAction.description}
+                  </span>
+                )}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </main>
+  );
+}

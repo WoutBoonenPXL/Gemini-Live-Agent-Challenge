@@ -1,0 +1,25 @@
+# ScreenPilot backend dependencies
+
+# Google AI
+google-generativeai>=0.8.0
+google-cloud-aiplatform>=1.60.0
+
+# Google Agent Development Kit
+google-adk>=0.1.0
+
+# Web framework
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+websockets>=12.0
+
+# Validation
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+
+# Browser automation (for server-side action replay / testing)
+playwright>=1.44.0
+
+# Utilities
+python-dotenv>=1.0.0
+pillow>=10.3.0
+httpx>=0.27.0
