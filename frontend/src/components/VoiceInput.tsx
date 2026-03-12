@@ -8,13 +8,28 @@ interface Props {
   disabled: boolean;
 }
 
+// Minimal local types for the Web Speech API (not in every TS lib configuration)
+interface ISpeechRecognition {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start(): void;
+  stop(): void;
+  onresult: ((event: ISpeechRecognitionEvent) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+}
+interface ISpeechRecognitionEvent {
+  results: { [index: number]: { [index: number]: { transcript: string } } };
+}
+
 /**
  * Push-to-talk voice input using the Web Speech API.
  * When the browser does not support it, the button is hidden.
  */
 export function VoiceInput({ onTranscript, disabled }: Props) {
   const [listening, setListening] = useState(false);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const recognitionRef = useRef<ISpeechRecognition | null>(null);
 
   const supported =
     typeof window !== "undefined" &&
@@ -29,15 +44,16 @@ export function VoiceInput({ onTranscript, disabled }: Props) {
       return;
     }
 
-    const SpeechRecognition =
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognitionCtor = (window as any).SpeechRecognition ||
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    const rec = new SpeechRecognition() as SpeechRecognition;
+      (window as any).webkitSpeechRecognition;
+    const rec = new SpeechRecognitionCtor() as ISpeechRecognition;
     rec.continuous = false;
     rec.interimResults = false;
     rec.lang = "en-US";
 
-    rec.onresult = (event: SpeechRecognitionEvent) => {
+    rec.onresult = (event: ISpeechRecognitionEvent) => {
       const transcript = event.results[0]?.[0]?.transcript ?? "";
       if (transcript) onTranscript(transcript);
     };
