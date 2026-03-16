@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900" role="img" aria-label="ScreenPilot architecture diagram">
+  <defs>
+    <style>
+      .title { font: 700 30px Arial, sans-serif; fill: #111827; }
+      .subtitle { font: 500 17px Arial, sans-serif; fill: #374151; }
+      .boxTitle { font: 700 18px Arial, sans-serif; fill: #111827; }
+      .boxText { font: 500 14px Arial, sans-serif; fill: #374151; }
+      .small { font: 500 12px Arial, sans-serif; fill: #4b5563; }
+      .edge { stroke: #374151; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+      .edgeSoft { stroke: #6b7280; stroke-width: 2; fill: none; marker-end: url(#arrowSoft); }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#374151" />
+    </marker>
+    <marker id="arrowSoft" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#6b7280" />
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1400" height="900" fill="#f9fafb" />
+
+  <text x="700" y="55" text-anchor="middle" class="title">ScreenPilot System Architecture</text>
+  <text x="700" y="84" text-anchor="middle" class="subtitle">Gemini-powered browser agent on Google Cloud Run</text>
+
+  <!-- User -->
+  <rect x="70" y="180" rx="16" ry="16" width="230" height="130" fill="#e0f2fe" stroke="#0284c7" stroke-width="2" />
+  <text x="185" y="215" text-anchor="middle" class="boxTitle">User</text>
+  <text x="185" y="240" text-anchor="middle" class="boxText">Submits goal</text>
+  <text x="185" y="260" text-anchor="middle" class="boxText">Views status + screenshots</text>
+
+  <!-- Frontend -->
+  <rect x="360" y="130" rx="16" ry="16" width="340" height="230" fill="#dcfce7" stroke="#16a34a" stroke-width="2" />
+  <text x="530" y="165" text-anchor="middle" class="boxTitle">Frontend (Next.js / React)</text>
+  <text x="530" y="192" text-anchor="middle" class="boxText">Cloud Run: screenpilot-frontend</text>
+  <text x="530" y="218" text-anchor="middle" class="boxText">POST /session</text>
+  <text x="530" y="241" text-anchor="middle" class="boxText">WebSocket /ws/{session_id}</text>
+  <text x="530" y="264" text-anchor="middle" class="boxText">Renders thinking, action, screenshot, error</text>
+  <text x="530" y="289" text-anchor="middle" class="small">Tailwind UI + command panel + session log</text>
+
+  <!-- Backend -->
+  <rect x="790" y="110" rx="16" ry="16" width="420" height="290" fill="#ede9fe" stroke="#7c3aed" stroke-width="2" />
+  <text x="1000" y="145" text-anchor="middle" class="boxTitle">Backend (FastAPI + Agent Runtime)</text>
+  <text x="1000" y="172" text-anchor="middle" class="boxText">Cloud Run: screenpilot-backend</text>
+  <text x="1000" y="198" text-anchor="middle" class="boxText">Session orchestration + action loop</text>
+  <text x="1000" y="224" text-anchor="middle" class="boxText">Gemini planning + tool execution</text>
+  <text x="1000" y="250" text-anchor="middle" class="boxText">WebSocket event stream to frontend</text>
+  <text x="1000" y="276" text-anchor="middle" class="boxText">Model config: gemini-2.5-flash (+ lite fallback)</text>
+  <text x="1000" y="304" text-anchor="middle" class="small">In-memory session store (Redis optional for scale)</text>
+
+  <!-- Gemini -->
+  <rect x="870" y="470" rx="16" ry="16" width="260" height="145" fill="#fff7ed" stroke="#f97316" stroke-width="2" />
+  <text x="1000" y="505" text-anchor="middle" class="boxTitle">Gemini on Vertex AI</text>
+  <text x="1000" y="532" text-anchor="middle" class="boxText">Reasoning over screenshot</text>
+  <text x="1000" y="556" text-anchor="middle" class="boxText">Returns next structured action</text>
+  <text x="1000" y="580" text-anchor="middle" class="small">google.genai SDK</text>
+
+  <!-- Playwright -->
+  <rect x="1160" y="470" rx="16" ry="16" width="200" height="145" fill="#fef9c3" stroke="#ca8a04" stroke-width="2" />
+  <text x="1260" y="505" text-anchor="middle" class="boxTitle">Playwright</text>
+  <text x="1260" y="532" text-anchor="middle" class="boxText">Chromium control</text>
+  <text x="1260" y="556" text-anchor="middle" class="boxText">Clicks / types / nav</text>
+  <text x="1260" y="580" text-anchor="middle" class="boxText">Screenshot capture</text>
+
+  <!-- Target website -->
+  <rect x="1160" y="700" rx="16" ry="16" width="200" height="115" fill="#e5e7eb" stroke="#6b7280" stroke-width="2" />
+  <text x="1260" y="738" text-anchor="middle" class="boxTitle">Target Website</text>
+  <text x="1260" y="763" text-anchor="middle" class="boxText">Any user-requested page</text>
+
+  <!-- Optional data store -->
+  <rect x="560" y="520" rx="16" ry="16" width="230" height="120" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2" stroke-dasharray="7 6" />
+  <text x="675" y="553" text-anchor="middle" class="boxTitle">Session Store</text>
+  <text x="675" y="577" text-anchor="middle" class="boxText">Current: in-memory dict</text>
+  <text x="675" y="601" text-anchor="middle" class="small">Scale option: Redis</text>
+
+  <!-- Edges -->
+  <path class="edge" d="M300 245 L360 245" />
+  <text x="330" y="233" text-anchor="middle" class="small">goal + UI actions</text>
+
+  <path class="edge" d="M700 210 L790 210" />
+  <text x="745" y="198" text-anchor="middle" class="small">HTTP POST /session</text>
+
+  <path class="edge" d="M700 275 L790 275" />
+  <text x="745" y="263" text-anchor="middle" class="small">WebSocket events</text>
+
+  <path class="edge" d="M1000 400 L1000 470" />
+  <text x="1038" y="440" class="small">prompt + screen context</text>
+
+  <path class="edge" d="M1080 540 L1160 540" />
+  <text x="1120" y="528" text-anchor="middle" class="small">execute action</text>
+
+  <path class="edge" d="M1260 615 L1260 700" />
+  <text x="1304" y="664" class="small">web interaction</text>
+
+  <path class="edgeSoft" d="M1160 585 C1110 620,1060 640,1000 640 C940 640,900 620,860 585" />
+  <text x="1008" y="670" text-anchor="middle" class="small">screenshot + action result feedback loop</text>
+
+  <path class="edgeSoft" d="M860 250 C760 300,700 390,675 520" />
+  <text x="700" y="430" text-anchor="middle" class="small">session state</text>
+</svg>

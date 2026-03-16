@@ -187,7 +187,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         logger.exception("WebSocket error: %s", exc)
     finally:
         agent_task.cancel()
-        SESSIONS.pop(session_id, None)
+        logger.info("WebSocket closed; preserving session for reconnect: session=%s", session_id)
 
 
 async def _run_agent(session: AgentSession, send_fn) -> None:

@@ -8,6 +8,14 @@ Replace this with your public repo before submission:
 
 `https://github.com/WoutBoonenPXL/Gemini-Live-Agent-Challenge`
 
+## Architecture Diagram
+
+Use this image file for the challenge Image Gallery/File Upload requirement:
+
+![ScreenPilot Architecture](assets/architecture-diagram.svg)
+
+The diagram shows how Gemini (Vertex AI) connects with the FastAPI backend, Playwright browser automation, optional session store, and the Next.js frontend.
+
 ## Text Description
 
 ### Features and functionality
