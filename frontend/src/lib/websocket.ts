@@ -35,11 +35,12 @@ export interface AgentAction {
 
 export interface ServerMessage {
   session_id: string;
-  type: "action" | "thinking" | "error" | "status";
+  type: "action" | "thinking" | "error" | "status" | "screenshot";
   action?: AgentAction;
   thinking?: string;
   error?: string;
   status?: string;
+  image_b64?: string;   // Playwright screenshot forwarded from backend
 }
 
 export interface ClientMessage {

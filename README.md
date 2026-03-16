@@ -1,230 +1,180 @@
-﻿# ScreenPilot — AI UI Navigator Agent
+﻿# ScreenPilot — Gemini Live Agent Challenge Submission
 
-> **Gemini Live Agent Challenge Submission**
-> Category: UI Navigator — Visual UI Understanding & Interaction
+ScreenPilot is a full-stack web agent that watches a real browser session, reasons over screenshots with Gemini, and executes browser actions with Playwright to complete user goals.
 
-ScreenPilot is a next-generation AI agent that becomes your hands on screen. Using **Gemini 2.0 Flash** multimodal understanding and the **Google Agent Development Kit (ADK)**, it observes your browser display via screen capture, interprets every visual element, and executes precise actions (click, type, scroll, navigate) to complete any goal you describe in plain language or voice.
+## URL to Public Code Repository
 
----
+Replace this with your public repo before submission:
 
-## Features
+`https://github.com/WoutBoonenPXL/Gemini-Live-Agent-Challenge`
 
-- **Real-time screen capture** via browser `getDisplayMedia` API — no extensions needed
-- **Gemini multimodal analysis** — screenshot + user intent → structured action plan
-- **Gemini Live API** — speak commands while sharing your screen; the agent listens and acts
-- **Autonomous multi-step task execution** — chain-of-thought loops until the goal is achieved
-- **Action overlay** — see bounding-box highlights of where the agent is clicking/typing
-- **Session history** — full audit trail of every screenshot, decision, and action taken
-- **Hosted on Google Cloud Run** — fully containerized, scalable, zero-ops
+## Text Description
 
----
+### Features and functionality
 
-## Tech Stack
+- Goal-driven browser automation from natural language instructions.
+- Real-time backend-to-frontend updates over WebSocket (`status`, `thinking`, `action`, `screenshot`, `error`).
+- Playwright-driven execution of structured actions (`click`, `type`, `scroll`, `navigate`, `wait`, `done`, `ask_user`).
+- Loop guard to stop repeated identical actions on unchanged screens.
+- One-step quota-safe mode (`AGENT_MAX_STEPS=1`) for controlled usage.
+- Rate-limit fail-fast behavior with retries and clear user-facing guidance.
+- Cloud deployment on Google Cloud Run (frontend + backend).
 
-| Layer | Technology |
-|---|---|
-| AI Model | Gemini 2.0 Flash (multimodal + live) |
-| Agent Framework | Google Agent Development Kit (ADK) |
-| Backend | Python 3.11 · FastAPI · WebSockets |
-| Action Execution | Playwright (Chromium) |
-| Frontend | Next.js 14 · TypeScript · Tailwind CSS |
-| Cloud | Google Cloud Run · Google Cloud Build · Artifact Registry |
-| Auth / Config | Google Application Default Credentials |
+### Technologies used
 
----
+- **Backend**: Python 3.11, FastAPI, WebSockets, Pydantic.
+- **Agent runtime**: Google ADK + custom session loop.
+- **Model SDK**: `google.genai` (Gemini client).
+- **Browser automation**: Playwright (Chromium).
+- **Frontend**: Next.js 14, React, TypeScript, Tailwind CSS.
+- **Cloud**: Google Cloud Run, Cloud Build, Artifact Registry.
+- **Auth/config**: `.env` settings + GCP service account IAM.
 
-## Architecture
+### Other data sources used
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    User's Browser                        │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │  Next.js Frontend                                │   │
-│  │  • getDisplayMedia() → screenshot frames         │   │
-│  │  • WebMicrophone → audio stream (Live API)       │   │
-│  │  • WebSocket client ↔ Backend                    │   │
-│  │  • Action overlay (click/type highlights)        │   │
-│  └─────────────────────┬────────────────────────────┘   │
-└────────────────────────│────────────────────────────────┘
-                         │  WebSocket (frames + commands)
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│           Google Cloud Run  (Backend)                    │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │  FastAPI  +  Google ADK Agent                    │   │
-│  │  ┌─────────────────────────────────────────┐     │   │
-│  │  │  ScreenPilotAgent (ADK)                 │     │   │
-│  │  │  • analyze_screen tool                  │     │   │
-│  │  │  • execute_action tool                  │     │   │
-│  │  │  • get_page_context tool                │     │   │
-│  │  └─────────────────────────────────────────┘     │   │
-│  │                                                   │   │
-│  │  Playwright (headless Chromium for actions)       │   │
-│  └──────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│              Google AI / Vertex AI                       │
-│   Gemini 2.0 Flash  (vision + live streaming)           │
-└─────────────────────────────────────────────────────────┘
-```
+- No private or third-party datasets are ingested.
+- Runtime inputs are:
+  - User goal text.
+  - Live browser screenshots captured from Playwright.
+  - Recent action history within the same session.
+- Optional external page data is only what the browser visits during user-requested tasks.
 
----
+### Findings and learnings
 
-## Local Spin-Up Instructions
+- Deployment reliability improved by excluding local `node_modules` from Docker context (`frontend/.dockerignore`).
+- Cloud Run frontend builds can fail if `public/` is missing when Dockerfile copies it; adding `frontend/public/.gitkeep` resolved this.
+- WebSocket transport and screenshot streaming worked correctly in production; the main runtime risk was model availability/permissions.
+- Vertex model availability can differ by project/region; configured model IDs must be validated against actual project access.
+- Explicit loop-detection and fail-fast quota behavior significantly improve user experience vs. silent retries.
+
+## Spin-up Instructions (Reproducible)
 
 ### Prerequisites
+
 - Python 3.11+
 - Node.js 20+
-- [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) (`gcloud`)
-- A Google Cloud project with the **Generative Language API** enabled
-- A `GOOGLE_API_KEY` from [Google AI Studio](https://aistudio.google.com/app/apikey)
+- Google Cloud SDK (`gcloud`)
+- A Google Cloud project with Vertex AI access
 
-### 1. Clone & configure environment
+### 1) Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/screenpilot-agent.git
-cd screenpilot-agent
-
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env.local
+git clone https://github.com/WoutBoonenPXL/Gemini-Live-Agent-Challenge.git
+cd Gemini-Live-Agent-Challenge
 ```
 
-Edit `backend/.env`:
-```env
-GOOGLE_API_KEY=your_api_key_here
-GEMINI_MODEL=gemini-2.0-flash
-GCP_PROJECT_ID=your-gcp-project-id
-```
-
-Edit `frontend/.env.local`:
-```env
-NEXT_PUBLIC_BACKEND_WS_URL=ws://localhost:8000/ws
-NEXT_PUBLIC_BACKEND_HTTP_URL=http://localhost:8000
-```
-
-### 2. Start the backend
+### 2) Backend setup
 
 ```bash
 cd backend
 python -m venv venv
-# Windows:
-venv\Scripts\activate
-# macOS/Linux:
-source venv/bin/activate
+```
 
+Windows:
+
+```powershell
+venv\Scripts\activate
+```
+
+macOS/Linux:
+
+```bash
+source venv/bin/activate
+```
+
+Install dependencies and browser:
+
+```bash
 pip install -r requirements.txt
 playwright install chromium
-
-uvicorn main:app --reload --port 8000
 ```
 
-### 3. Start the frontend
+Create `backend/.env`:
+
+```env
+USE_VERTEX=true
+GCP_PROJECT_ID=gen-lang-client-0525160177
+VERTEX_LOCATION=us-central1
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL_FALLBACKS=gemini-2.5-flash-lite
+AGENT_MAX_STEPS=1
+```
+
+Run backend:
 
 ```bash
-cd frontend
+python run.py
+```
+
+Verify:
+
+```bash
+curl http://localhost:8000/health
+```
+
+### 3) Frontend setup
+
+```bash
+cd ../frontend
 npm install
-npm run dev
-# Open http://localhost:3000
 ```
 
-### 4. (Optional) Docker Compose — run both services together
+Create `frontend/.env.local`:
+
+```env
+NEXT_PUBLIC_BACKEND_HTTP_URL=http://localhost:8000
+NEXT_PUBLIC_BACKEND_WS_URL=ws://localhost:8000/ws
+```
+
+Run frontend:
 
 ```bash
-docker compose up --build
-# Frontend → http://localhost:3000
-# Backend  → http://localhost:8000
+npm run dev
 ```
 
----
+Open `http://localhost:3000`.
 
-## Google Cloud Deployment
+### 4) Cloud Run deployment (same setup used in this project)
 
-### One-command deploy (Cloud Run)
+Authenticate and set project:
 
 ```bash
 gcloud auth login
-gcloud config set project YOUR_PROJECT_ID
-
-# Deploy backend
-cd backend
-gcloud run deploy screenpilot-backend \
-  --source . \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --set-env-vars GOOGLE_API_KEY=YOUR_KEY,GEMINI_MODEL=gemini-2.0-flash
-
-# Update NEXT_PUBLIC_BACKEND_WS_URL in frontend/.env.local, then:
-cd ../frontend
-gcloud run deploy screenpilot-frontend \
-  --source . \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --set-env-vars NEXT_PUBLIC_BACKEND_WS_URL=wss://YOUR_BACKEND_URL/ws
+gcloud auth application-default login
+gcloud config set project gen-lang-client-0525160177
 ```
 
-### CI/CD via Cloud Build
+Deploy backend:
 
 ```bash
-gcloud builds submit --config cloudbuild.yaml
+gcloud run deploy screenpilot-backend \
+  --source backend \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --set-env-vars USE_VERTEX=true,GCP_PROJECT_ID=gen-lang-client-0525160177,VERTEX_LOCATION=us-central1,GEMINI_MODEL=gemini-2.5-flash,GEMINI_MODEL_FALLBACKS=gemini-2.5-flash-lite,AGENT_MAX_STEPS=1
 ```
 
----
+Deploy frontend (replace `<BACKEND_URL>`):
 
-## Project Structure
-
-```
-screenpilot-agent/
-├── backend/
-│   ├── main.py               # FastAPI app + WebSocket handler
-│   ├── agent.py              # Google ADK ScreenPilotAgent definition
-│   ├── gemini_client.py      # Gemini API wrapper (vision + live)
-│   ├── screen_analyzer.py    # Screenshot → structured UI understanding
-│   ├── action_models.py      # Pydantic models for actions
-│   ├── requirements.txt
-│   ├── Dockerfile
-│   └── .env.example
-├── frontend/
-│   ├── src/
-│   │   ├── app/
-│   │   │   ├── page.tsx      # Main UI
-│   │   │   └── layout.tsx
-│   │   ├── components/
-│   │   │   ├── ScreenCapture.tsx
-│   │   │   ├── ActionOverlay.tsx
-│   │   │   ├── CommandPanel.tsx
-│   │   │   ├── SessionLog.tsx
-│   │   │   └── VoiceInput.tsx
-│   │   └── lib/
-│   │       ├── websocket.ts
-│   │       └── screenCapture.ts
-│   ├── package.json
-│   ├── Dockerfile
-│   └── .env.example
-├── docker-compose.yml
-├── cloudbuild.yaml
-└── README.md
+```bash
+gcloud run deploy screenpilot-frontend \
+  --source frontend \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --set-env-vars NEXT_PUBLIC_BACKEND_HTTP_URL= https://screenpilot-backend-950824668815.us-central1.run.app,NEXT_PUBLIC_BACKEND_WS_URL= https://screenpilot-backend-950824668815.us-central1.run.app/ws
 ```
 
----
+Grant Vertex permission to backend service account:
 
-## Demo Scenarios
+```bash
+gcloud projects add-iam-policy-binding <YOUR_GCP_PROJECT_ID> \
+  --member="serviceAccount:<BACKEND_SERVICE_ACCOUNT>" \
+  --role="roles/aiplatform.user"
+```
 
-| Goal | What the Agent Does |
-|---|---|
-| "Book a flight from NYC to LA next Friday" | Opens Google Flights, fills fields, selects cheapest option |
-| "Find software engineer jobs in Seattle on LinkedIn" | Navigates Jobs, filters by location/role, opens top listing |
-| "Add milk, eggs, and bread to my Amazon cart" | Searches each item, adds to cart |
-| "Download the latest invoice from Stripe" | Finds Invoices section, downloads PDF |
+## Notes for Judges
 
----
-
-## Learnings & Findings
-
-- **Gemini 2.0 Flash** is remarkably accurate at identifying UI elements from raw screenshots — bounding-box predictions land within 5–10px on standard web UIs without DOM access
-- **Chain-of-thought prompting** was critical: asking the model to narrate its understanding before acting reduced hallucinated clicks by ~60%
-- **ADK's tool-calling loop** made it simple to define `analyze_screen`, `execute_action`, and `ask_user` as discrete tools — the framework handles retries and state automatically
-- The **Gemini Live API** enables sub-second voice→action latency, making the agent feel genuinely interactive
-- Screen capture via `getDisplayMedia` requires HTTPS in production; Cloud Run's auto-TLS made this seamless
+- The project is reproducible using the commands above.
+- Backend health endpoint: `/health`.
+- Frontend and backend are independently deployable to Cloud Run.
 

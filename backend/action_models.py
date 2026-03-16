@@ -167,8 +167,9 @@ class ClientMessage(BaseModel):
 class ServerMessage(BaseModel):
     """Message sent FROM the backend TO the browser."""
     session_id: str
-    type: Literal["action", "thinking", "error", "status"]
+    type: Literal["action", "thinking", "error", "status", "screenshot"]
     action: Optional[AgentAction] = None
     thinking: Optional[str] = None           # chain-of-thought narration
     error: Optional[str] = None
     status: Optional[str] = None
+    image_b64: Optional[str] = None          # Playwright screenshot forwarded to frontend

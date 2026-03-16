@@ -24,6 +24,8 @@ export default function Home() {
   const [pendingFrame, setPendingFrame] = useState<{
     b64: string; w: number; h: number
   } | null>(null);
+  // Playwright browser screenshot from backend
+  const [pilotFrame, setPilotFrame] = useState<string | null>(null);
 
   const wsRef = useRef<ScreenPilotWebSocket | null>(null);
 
@@ -49,41 +51,35 @@ export default function Home() {
       ws.onMessage((msg) => {
         setMessages((prev) => [...prev, msg]);
 
+        // Backend forwards Playwright screenshot for display
+        if (msg.type === "screenshot" && msg.image_b64) {
+          setPilotFrame(msg.image_b64);
+          return;
+        }
+
         if (msg.type === "action" && msg.action) {
           setCurrentAction(msg.action);
 
           if (msg.action.type === "screenshot") {
-            // Backend wants a fresh frame — send the most recent one
-            setPendingFrame((f) => {
-              if (f) {
-                ws.send({
-                  session_id,
-                  type: "screenshot",
-                  image_b64: f.b64,
-                  screen_width: f.w,
-                  screen_height: f.h,
-                });
-              }
-              return f;
-            });
+            // Legacy: backend requesting a client screenshot (no-op now; Playwright handles this)
           } else if (
             msg.action.type === "done" ||
             msg.action.type === "ask_user"
           ) {
             setRunning(false);
-          } else {
-            // Simulate action then report success back
-            setTimeout(() => {
-              ws.send({
-                session_id,
-                type: "action_result",
-                action_success: true,
-              });
-            }, 600);
           }
+          // No need to send action_result — Playwright handles execution server-side
         }
 
         if (msg.type === "error") {
+          setRunning(false);
+        }
+
+        if (
+          msg.type === "status" &&
+          msg.status &&
+          msg.status.includes("Reached maximum steps")
+        ) {
           setRunning(false);
         }
       });
@@ -160,20 +156,16 @@ export default function Home() {
         {/* Left column — Screen preview */}
         <div className="lg:col-span-2 flex flex-col gap-4">
           <section className="bg-white/3 border border-white/8 rounded-2xl p-4">
-            <h2 className="text-sm font-medium text-white/60 mb-3">Screen Capture</h2>
-            <ScreenCapture
-              onFrame={handleFrame}
-              onStop={handleCaptureStop}
-              onStart={handleCaptureStart}
-              active={capturing}
-            />
+            <h2 className="text-sm font-medium text-white/60 mb-3">
+              Browser View (Playwright)
+            </h2>
 
-            {/* Live screen view with action overlay */}
-            {pendingFrame && (
-              <div className="relative mt-3 rounded-xl overflow-hidden border border-white/10 bg-black">
+            {/* Playwright-controlled browser screenshot */}
+            {pilotFrame ? (
+              <div className="relative rounded-xl overflow-hidden border border-white/10 bg-black">
                 <img
-                  src={`data:image/jpeg;base64,${pendingFrame.b64}`}
-                  alt="Screen capture"
+                  src={`data:image/png;base64,${pilotFrame}`}
+                  alt="Playwright browser"
                   className="w-full h-auto"
                 />
                 <ActionOverlay
@@ -182,7 +174,35 @@ export default function Home() {
                   screenHeight={screenDims.h}
                 />
               </div>
+            ) : (
+              <div className="flex items-center justify-center h-48 rounded-xl border border-white/10 bg-black/30 text-white/30 text-sm">
+                {running ? "Waiting for browser screenshot…" : "Enter a goal to start the agent"}
+              </div>
             )}
+
+            {/* Optional: user screen capture section */}
+            <details className="mt-3">
+              <summary className="text-xs text-white/30 cursor-pointer hover:text-white/50 select-none">
+                Optional: Share your own screen with the agent
+              </summary>
+              <div className="mt-2">
+                <ScreenCapture
+                  onFrame={handleFrame}
+                  onStop={handleCaptureStop}
+                  onStart={handleCaptureStart}
+                  active={capturing}
+                />
+                {pendingFrame && (
+                  <div className="relative mt-3 rounded-xl overflow-hidden border border-white/10 bg-black">
+                    <img
+                      src={`data:image/jpeg;base64,${pendingFrame.b64}`}
+                      alt="User screen capture"
+                      className="w-full h-auto"
+                    />
+                  </div>
+                )}
+              </div>
+            </details>
           </section>
         </div>
 
@@ -194,16 +214,16 @@ export default function Home() {
               <h2 className="text-sm font-medium text-white/60">Command</h2>
               <VoiceInput
                 onTranscript={(text) => {
-                  if (!running && capturing) startSession(text);
+                  if (!running) startSession(text);
                 }}
-                disabled={!capturing || running}
+                disabled={running}
               />
             </div>
             <CommandPanel
               onSubmit={(goal) => startSession(goal)}
               onStop={handleStop}
               running={running}
-              disabled={!capturing}
+              disabled={false}
             />
           </section>
 

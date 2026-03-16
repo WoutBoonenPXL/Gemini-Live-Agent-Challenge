@@ -46,7 +46,7 @@ steps:
       - --memory=2Gi
       - --cpu=2
       - --concurrency=80
-      - --set-env-vars=GOOGLE_API_KEY=${_GOOGLE_API_KEY},GEMINI_MODEL=gemini-2.0-flash,GCP_PROJECT_ID=$PROJECT_ID
+      - --set-env-vars=GOOGLE_API_KEY=${_GOOGLE_API_KEY},GEMINI_MODEL=gemini-flash-lite-latest,GCP_PROJECT_ID=$PROJECT_ID
     waitFor: [push-backend]
 
   # Capture the backend URL for the frontend build

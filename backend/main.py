@@ -14,9 +14,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
+import traceback
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
+
+# On Windows, uvicorn defaults to SelectorEventLoop which does NOT support
+# subprocess creation (needed by Playwright). Switch to ProactorEventLoop.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=True)
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -88,9 +99,16 @@ async def root():
 
 @app.get("/health")
 async def health():
+    configured_models = getattr(AGENT._gemini, "model_candidates", [])
+    active_model = getattr(AGENT._gemini, "model", os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"))
+    provider = getattr(AGENT._gemini, "provider", "gemini-api")
     return {
         "status": "healthy",
-        "model": os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"),
+        "provider": provider,
+        "model": active_model,
+        "configured_models": configured_models,
+        "use_vertex": os.environ.get("USE_VERTEX", "false"),
+        "vertex_location": os.environ.get("VERTEX_LOCATION", "us-central1"),
         "active_sessions": len(SESSIONS),
     }
 
@@ -173,12 +191,16 @@ async def _run_agent(session: AgentSession, send_fn) -> None:
     except asyncio.CancelledError:
         pass
     except Exception as exc:
-        logger.exception("Agent loop error for session %s: %s", session.session_id, exc)
+        tb = traceback.format_exc()
+        logger.error(
+            "Agent loop error for session %s:\n%s",
+            session.session_id, tb,
+        )
         try:
             await send_fn(ServerMessage(
                 session_id=session.session_id,
                 type="error",
-                error=f"Agent error: {exc}",
+                error=f"Agent error: {repr(exc)}\n\n{tb}",
             ))
         except Exception:
             pass

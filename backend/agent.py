@@ -13,11 +13,17 @@ Each iteration:
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import json
 import logging
+import os
+import re
 import uuid
 from dataclasses import dataclass, field
 from typing import AsyncGenerator, Callable, Optional
 
+from pydantic import PrivateAttr
 from google.adk.agents import BaseAgent
 from google.adk.events import Event, EventActions
 
@@ -28,12 +34,16 @@ from action_models import (
     ScreenshotAction,
     ServerMessage,
 )
-from gemini_client import GeminiClient
+from gemini_client import GeminiClient, GeminiRateLimitError
+from playwright_driver import PlaywrightDriver
 
 logger = logging.getLogger(__name__)
 
-MAX_STEPS = 50          # hard cap per session
+MAX_STEPS = max(1, int(os.environ.get("AGENT_MAX_STEPS", "1")))
 SCREENSHOT_TIMEOUT = 10  # seconds to wait for a screenshot from client
+MAX_REPEAT_ACTIONS = 3
+MAX_RATE_LIMIT_WAIT_SECONDS = max(1, int(os.environ.get("AGENT_MAX_RATE_LIMIT_WAIT_SECONDS", "8")))
+MAX_RATE_LIMIT_RETRIES = max(0, int(os.environ.get("AGENT_MAX_RATE_LIMIT_RETRIES", "1")))
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +66,10 @@ class AgentSession:
     action_result_ready: asyncio.Event = field(default_factory=asyncio.Event)
     last_action_success: bool = True
     last_action_error: Optional[str] = None
+    last_screenshot_hash: Optional[str] = None
+    last_action_signature: Optional[str] = None
+    repeated_action_count: int = 0
+    rate_limit_retries: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -72,12 +86,18 @@ class ScreenPilotAgent(BaseAgent):
             ...
     """
 
-    name = "ScreenPilotAgent"
-    description = "Observes a browser screen and executes actions to complete user goals."
+    _gemini: GeminiClient = PrivateAttr()
+    _playwright: PlaywrightDriver = PrivateAttr()
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.gemini = GeminiClient()
+    def __init__(self, **kwargs) -> None:
+        kwargs.setdefault("name", "ScreenPilotAgent")
+        kwargs.setdefault(
+            "description",
+            "Observes a browser screen and executes actions to complete user goals.",
+        )
+        super().__init__(**kwargs)
+        self._gemini = GeminiClient()
+        self._playwright = PlaywrightDriver()
 
     # ------------------------------------------------------------------
     # ADK entry-point
@@ -123,36 +143,56 @@ class ScreenPilotAgent(BaseAgent):
         """
         logger.info("[%s] Starting session. Goal: %s", session.session_id, session.goal)
 
+        # Launch Playwright browser for this session
+        try:
+            await self._playwright.launch(headless=True)
+        except Exception as exc:
+            logger.exception("[%s] Playwright launch failed: %r", session.session_id, exc)
+            await send_fn(ServerMessage(
+                session_id=session.session_id,
+                type="error",
+                error=f"Playwright launch failed: {repr(exc)} — make sure you ran 'playwright install' and that the event loop is ProactorEventLoop on Windows.",
+            ))
+            return
+        # If the goal includes a URL, navigate there first
+        url_match = re.search(r"https?://\S+", session.goal)
+        if url_match:
+            await self._playwright.goto(url_match.group(0))
+
         while session.step < MAX_STEPS and not session.done:
             session.step += 1
             logger.debug("[%s] Step %d", session.session_id, session.step)
 
-            # 1. Request a fresh screenshot
+            # 1. Capture screenshot directly from Playwright browser
             await send_fn(ServerMessage(
                 session_id=session.session_id,
-                type="action",
-                action=ScreenshotAction(),
+                type="status",
+                status="📸 Taking screenshot…",
             ))
-
-            # 2. Wait for the client to send back the screenshot
-            session.screenshot_ready.clear()
             try:
-                await asyncio.wait_for(
-                    session.screenshot_ready.wait(),
-                    timeout=SCREENSHOT_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                logger.warning("[%s] Screenshot timeout at step %d", session.session_id, session.step)
+                screenshot_bytes = await self._playwright.screenshot()
+                image_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
+                # Also update viewport size from page
+                vp = self._playwright.viewport_size
+                if vp:
+                    session.screen_width = vp.get("width", 1280)
+                    session.screen_height = vp.get("height", 720)
+                # Forward screenshot to frontend for display
+                await send_fn(ServerMessage(
+                    session_id=session.session_id,
+                    type="screenshot",
+                    image_b64=image_b64,
+                ))
+            except Exception as exc:
+                logger.warning("[%s] Screenshot error: %s", session.session_id, exc)
                 await send_fn(ServerMessage(
                     session_id=session.session_id,
                     type="error",
-                    error="Screenshot timeout — did the browser tab close?",
+                    error=f"Screenshot failed: {exc}",
                 ))
                 break
 
-            image_b64 = session.last_screenshot_b64
-            if not image_b64:
-                continue
+            screenshot_hash = hashlib.sha256(image_b64.encode("utf-8")).hexdigest()
 
             # 3. Ask Gemini what to do next
             try:
@@ -161,13 +201,60 @@ class ScreenPilotAgent(BaseAgent):
                     type="status",
                     status="🧠 Analysing screen…",
                 ))
-                thinking, action_dict = await self.gemini.analyze_screen(
+                thinking, action_dict = await self._gemini.analyze_screen(
                     image_b64=image_b64,
                     goal=session.goal,
                     history=session.history,
                     screen_width=session.screen_width,
                     screen_height=session.screen_height,
                 )
+            except GeminiRateLimitError as exc:
+                retry_after = min(max(exc.retry_after_seconds, 1.0), 120.0)
+                session.rate_limit_retries += 1
+
+                if (
+                    retry_after > MAX_RATE_LIMIT_WAIT_SECONDS
+                    or session.rate_limit_retries > MAX_RATE_LIMIT_RETRIES
+                ):
+                    session.done = True
+                    await send_fn(ServerMessage(
+                        session_id=session.session_id,
+                        type="action",
+                        action=AskUserAction(
+                            question=(
+                                "Gemini is currently rate-limited for this key/project. "
+                                "Please wait for quota reset or switch credentials, then run again."
+                            ),
+                            description=(
+                                f"Rate limit wait ({retry_after:.1f}s) exceeds threshold "
+                                f"({MAX_RATE_LIMIT_WAIT_SECONDS}s)."
+                            ),
+                        ),
+                    ))
+                    session.history.append({
+                        "step": session.step,
+                        "thinking": "Stopped due to Gemini quota/rate limit.",
+                        "action": {
+                            "type": "ask_user",
+                            "question": "Quota/rate limit requires manual retry later.",
+                        },
+                        "success": False,
+                        "error": str(exc),
+                    })
+                    return
+
+                await send_fn(ServerMessage(
+                    session_id=session.session_id,
+                    type="status",
+                    status=(
+                        f"⏳ Gemini rate limit hit. Waiting {retry_after:.1f}s, then retrying…"
+                    ),
+                ))
+
+                # Don't consume this step when throttled.
+                session.step = max(0, session.step - 1)
+                await asyncio.sleep(retry_after)
+                continue
             except Exception as exc:
                 logger.exception("[%s] Gemini error", session.session_id)
                 await send_fn(ServerMessage(
@@ -179,6 +266,7 @@ class ScreenPilotAgent(BaseAgent):
 
             # Broadcast thinking narration
             if thinking:
+                session.rate_limit_retries = 0
                 await send_fn(ServerMessage(
                     session_id=session.session_id,
                     type="thinking",
@@ -187,6 +275,45 @@ class ScreenPilotAgent(BaseAgent):
 
             # 4. Parse and dispatch the action
             action = self._parse_action(action_dict)
+            action_signature = self._action_signature(action_dict)
+
+            if (
+                screenshot_hash == session.last_screenshot_hash
+                and action_signature == session.last_action_signature
+                and action_dict.get("type") not in {"wait", "screenshot", "done", "ask_user"}
+            ):
+                session.repeated_action_count += 1
+            else:
+                session.repeated_action_count = 0
+
+            session.last_screenshot_hash = screenshot_hash
+            session.last_action_signature = action_signature
+
+            if session.repeated_action_count >= MAX_REPEAT_ACTIONS:
+                session.done = True
+                await send_fn(ServerMessage(
+                    session_id=session.session_id,
+                    type="action",
+                    action=AskUserAction(
+                        question=(
+                            "I am stuck repeating the same action because the screen is not changing. "
+                            "Please perform the highlighted step manually, then rerun the agent."
+                        ),
+                        description="Repeated identical action detected on an unchanged screen.",
+                    ),
+                ))
+                session.history.append({
+                    "step": session.step,
+                    "thinking": "Stopped to avoid a loop on an unchanged screen.",
+                    "action": {
+                        "type": "ask_user",
+                        "question": "Manual intervention required.",
+                    },
+                    "success": False,
+                    "error": "Repeated identical action detected.",
+                })
+                return
+
             history_entry = {
                 "step": session.step,
                 "thinking": thinking,
@@ -220,32 +347,36 @@ class ScreenPilotAgent(BaseAgent):
                 return
 
             # Regular action — send to frontend and wait for result
+            # Try to execute the action in Playwright (if automatable)
+            result = await self._playwright.perform_action(action)
+            history_entry["success"] = result.get("success", True)
+            if not result.get("success", True):
+                history_entry["error"] = result.get("error")
+            session.history.append(history_entry)
+
+            # Report result to frontend
             await send_fn(ServerMessage(
                 session_id=session.session_id,
                 type="action",
                 action=action,
             ))
-
-            session.action_result_ready.clear()
-            try:
-                await asyncio.wait_for(
-                    session.action_result_ready.wait(),
-                    timeout=15,
-                )
-            except asyncio.TimeoutError:
-                logger.warning("[%s] Action result timeout", session.session_id)
-
-            history_entry["success"] = session.last_action_success
-            if not session.last_action_success:
-                history_entry["error"] = session.last_action_error
-            session.history.append(history_entry)
+            # Also set action result for session (for compatibility)
+            session.last_action_success = result.get("success", True)
+            session.last_action_error = result.get("error")
+            session.action_result_ready.set()
 
         if not session.done:
             await send_fn(ServerMessage(
                 session_id=session.session_id,
                 type="status",
-                status=f"⚠️ Reached maximum steps ({MAX_STEPS}). Session ended.",
+                status=(
+                    f"⚠️ Reached maximum steps ({MAX_STEPS}). Session ended. "
+                    f"Run again for the next step."
+                ),
             ))
+
+        # Close Playwright browser
+        await self._playwright.close()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -281,3 +412,7 @@ class ScreenPilotAgent(BaseAgent):
             return cls(**{k: v for k, v in action_dict.items() if k != "type"})
         except Exception:
             return ScreenshotAction()
+
+    @staticmethod
+    def _action_signature(action_dict: dict) -> str:
+        return json.dumps(action_dict, sort_keys=True, ensure_ascii=True)
