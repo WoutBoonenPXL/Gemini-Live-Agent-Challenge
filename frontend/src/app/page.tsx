@@ -10,7 +10,10 @@ import { VoiceInput } from "@/components/VoiceInput";
 import { ScreenPilotWebSocket, type ServerMessage, type AgentAction } from "@/lib/websocket";
 
 const BACKEND_HTTP =
-  process.env.NEXT_PUBLIC_BACKEND_HTTP_URL ?? "http://localhost:8000";
+  process.env.NEXT_PUBLIC_BACKEND_HTTP_URL ??
+  (typeof window !== "undefined" && window.location.hostname === "localhost"
+    ? "http://localhost:8000"
+    : "https://screenpilot-backend-950824668815.us-central1.run.app");
 
 export default function Home() {
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -19,6 +22,7 @@ export default function Home() {
   const [capturing, setCapturing] = useState(false);
   const [running, setRunning] = useState(false);
   const [messages, setMessages] = useState<ServerMessage[]>([]);
+  const [uiError, setUiError] = useState<string | null>(null);
   const [currentAction, setCurrentAction] = useState<AgentAction | null>(null);
   const [screenDims, setScreenDims] = useState({ w: 1280, h: 720 });
   const [pendingFrame, setPendingFrame] = useState<{
@@ -28,27 +32,84 @@ export default function Home() {
   const [pilotFrame, setPilotFrame] = useState<string | null>(null);
 
   const wsRef = useRef<ScreenPilotWebSocket | null>(null);
+  const activeSessionIdRef = useRef<string | null>(null);
+  const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ---------------------------------------------------------------------------
   // Create session + connect WebSocket
   // ---------------------------------------------------------------------------
   const startSession = useCallback(async (goal: string) => {
     try {
+      if (
+        wsRef.current &&
+        activeSessionIdRef.current &&
+        wsRef.current.connected
+      ) {
+        setUiError(null);
+        setRunning(true);
+        setCurrentAction(null);
+        wsRef.current.send({
+          session_id: activeSessionIdRef.current,
+          type: "command",
+          goal,
+        });
+        return;
+      }
+
+      if (connectTimeoutRef.current) {
+        clearTimeout(connectTimeoutRef.current);
+        connectTimeoutRef.current = null;
+      }
+
+      wsRef.current?.disconnect();
+      wsRef.current = null;
+      activeSessionIdRef.current = null;
+      setMessages([]);
+      setCurrentAction(null);
+      setPilotFrame(null);
+      setUiError(null);
+
       const res = await fetch(`${BACKEND_HTTP}/session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal }),
       });
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`Session request failed (${res.status}): ${errorText}`);
+      }
+
       const { session_id } = await res.json() as { session_id: string };
       setSessionId(session_id);
+      activeSessionIdRef.current = session_id;
 
       const ws = new ScreenPilotWebSocket(session_id);
       wsRef.current = ws;
       setWsClient(ws);
 
-      ws.onStatus((isConnected) => setConnected(isConnected));
+      ws.onStatus((isConnected) => {
+        setConnected(isConnected);
+        if (isConnected) {
+          if (connectTimeoutRef.current) {
+            clearTimeout(connectTimeoutRef.current);
+            connectTimeoutRef.current = null;
+          }
+          setUiError(null);
+          return;
+        }
+
+        if (running) {
+          setUiError("Connection to backend was lost. Click Run Agent to retry.");
+          setRunning(false);
+        }
+      });
 
       ws.onMessage((msg) => {
+        if (msg.session_id !== activeSessionIdRef.current) {
+          return;
+        }
+
         setMessages((prev) => [...prev, msg]);
 
         // Backend forwards Playwright screenshot for display
@@ -72,6 +133,7 @@ export default function Home() {
         }
 
         if (msg.type === "error") {
+          setUiError(msg.error ?? "Agent returned an error.");
           setRunning(false);
         }
 
@@ -86,11 +148,22 @@ export default function Home() {
 
       ws.connect();
       setRunning(true);
-      setMessages([]);
+      connectTimeoutRef.current = setTimeout(() => {
+        if (!ws.connected) {
+          setUiError("Could not connect to backend websocket. Please retry.");
+          setRunning(false);
+        }
+      }, 10000);
     } catch (err) {
       console.error("Failed to start session:", err);
+      setUiError(
+        err instanceof Error
+          ? err.message
+          : "Failed to start session. Please retry."
+      );
+      setRunning(false);
     }
-  }, []);
+  }, [running]);
 
   // ---------------------------------------------------------------------------
   // Screen capture callbacks
@@ -110,10 +183,17 @@ export default function Home() {
   }, []);
 
   const handleStop = useCallback(() => {
+    if (connectTimeoutRef.current) {
+      clearTimeout(connectTimeoutRef.current);
+      connectTimeoutRef.current = null;
+    }
     wsRef.current?.disconnect();
+    wsRef.current = null;
+    activeSessionIdRef.current = null;
     setRunning(false);
     setConnected(false);
     setSessionId(null);
+    setCurrentAction(null);
   }, []);
 
   // ---------------------------------------------------------------------------
@@ -121,6 +201,9 @@ export default function Home() {
   // ---------------------------------------------------------------------------
   useEffect(() => {
     return () => {
+      if (connectTimeoutRef.current) {
+        clearTimeout(connectTimeoutRef.current);
+      }
       wsRef.current?.disconnect();
     };
   }, []);
@@ -155,6 +238,11 @@ export default function Home() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-7xl mx-auto">
         {/* Left column — Screen preview */}
         <div className="lg:col-span-2 flex flex-col gap-4">
+          {uiError && (
+            <section className="bg-red-500/10 border border-red-500/30 rounded-2xl p-3 text-sm text-red-200">
+              {uiError}
+            </section>
+          )}
           <section className="bg-white/3 border border-white/8 rounded-2xl p-4">
             <h2 className="text-sm font-medium text-white/60 mb-3">
               Browser View (Playwright)

@@ -27,7 +27,7 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from dotenv import load_dotenv
-load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=True)
+load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=False)
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -174,6 +174,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
             await _handle_client_message(session, msg)
 
+            if msg.type == "command" and agent_task.done():
+                _prepare_session_for_next_run(session)
+                agent_task = asyncio.create_task(
+                    _run_agent(session, send_fn),
+                    name=f"agent-{session_id}",
+                )
+
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected: session=%s", session_id)
     except Exception as exc:
@@ -204,6 +211,21 @@ async def _run_agent(session: AgentSession, send_fn) -> None:
             ))
         except Exception:
             pass
+
+
+def _prepare_session_for_next_run(session: AgentSession) -> None:
+    """Reset per-run state so one-step sessions can continue on new commands."""
+    session.step = 0
+    session.done = False
+    session.waiting_for_screenshot = False
+    session.last_action_success = True
+    session.last_action_error = None
+    session.repeated_action_count = 0
+    session.rate_limit_retries = 0
+    session.last_screenshot_hash = None
+    session.last_action_signature = None
+    session.screenshot_ready.clear()
+    session.action_result_ready.clear()
 
 
 async def _handle_client_message(session: AgentSession, msg: ClientMessage) -> None:

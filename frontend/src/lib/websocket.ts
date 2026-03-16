@@ -71,7 +71,10 @@ export class ScreenPilotWebSocket {
   constructor(sessionId: string) {
     this.sessionId = sessionId;
     const base =
-      process.env.NEXT_PUBLIC_BACKEND_WS_URL ?? "ws://localhost:8000/ws";
+      process.env.NEXT_PUBLIC_BACKEND_WS_URL ??
+      (typeof window !== "undefined" && window.location.hostname === "localhost"
+        ? "ws://localhost:8000/ws"
+        : "wss://screenpilot-backend-950824668815.us-central1.run.app/ws");
     this.url = `${base}/${sessionId}`;
   }
 
