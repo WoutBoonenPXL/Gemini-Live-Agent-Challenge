@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, KeyboardEvent } from "react";
-import { Send, RotateCcw, Square } from "lucide-react";
+import { Send, RotateCcw, Square, ChevronRight } from "lucide-react";
 
 interface Props {
   onSubmit: (goal: string) => void;
   onStop: () => void;
   running: boolean;
   disabled: boolean;
+  canContinue?: boolean;
 }
 
 const EXAMPLE_GOALS = [
@@ -17,13 +18,19 @@ const EXAMPLE_GOALS = [
   "Go to github.com and find the trending repositories today",
 ];
 
-export function CommandPanel({ onSubmit, onStop, running, disabled }: Props) {
+export function CommandPanel({ onSubmit, onStop, running, disabled, canContinue }: Props) {
   const [goal, setGoal] = useState("");
 
   const handleSubmit = () => {
     const trimmed = goal.trim();
     if (!trimmed || disabled) return;
     onSubmit(trimmed);
+    setGoal("");
+  };
+
+  const handleContinue = () => {
+    if (disabled) return;
+    onSubmit("");  // Empty goal signals to reuse previous goal
     setGoal("");
   };
 
@@ -69,6 +76,18 @@ export function CommandPanel({ onSubmit, onStop, running, disabled }: Props) {
             <Square size={14} />
             Stop Agent
           </button>
+        ) : canContinue ? (
+          <button
+            onClick={handleContinue}
+            disabled={disabled}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-brand-500/20
+                       border border-brand-500/40 text-brand-300 hover:bg-brand-500/30
+                       disabled:opacity-40 disabled:cursor-not-allowed
+                       transition-all text-sm font-medium flex-1"
+          >
+            <ChevronRight size={14} />
+            Continue Step
+          </button>
         ) : (
           <button
             onClick={handleSubmit}
@@ -76,7 +95,7 @@ export function CommandPanel({ onSubmit, onStop, running, disabled }: Props) {
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-brand-500/20
                        border border-brand-500/40 text-brand-300 hover:bg-brand-500/30
                        disabled:opacity-40 disabled:cursor-not-allowed
-                       transition-all text-sm font-medium"
+                       transition-all text-sm font-medium flex-1"
           >
             <Send size={14} />
             Run Agent

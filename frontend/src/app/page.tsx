@@ -312,6 +312,11 @@ export default function Home() {
               onStop={handleStop}
               running={running}
               disabled={false}
+              canContinue={
+                activeSessionIdRef.current !== null &&
+                wsRef.current?.connected &&
+                !running
+              }
             />
           </section>
 
